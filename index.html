@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>dBA Generator Sound Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for generator/sound theme */
+        :root {
+            --color-primary: #10b981; /* Emerald 500 */
+            --color-secondary: #059669; /* Emerald 600 */
+            --color-bg: #1f2937; /* Gray 800 */
+            --color-text: #f3f4f6; /* Gray 100 */
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--color-bg);
+            color: var(--color-text);
+        }
+        .card {
+            background-color: #374151; /* Gray 700 */
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.2);
+        }
+        input[type="number"] {
+            background-color: #4b5563; /* Gray 600 */
+            border-color: var(--color-secondary);
+            color: var(--color-text);
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8 flex items-center justify-center min-h-screen">
+
+<div class="card w-full max-w-4xl p-6 md:p-10 rounded-xl space-y-8">
+    <header class="text-center space-y-2">
+        <h1 class="4xl font-extrabold text-white">Generator dBA Sound Simulator</h1>
+        <p class="text-emerald-400 text-xl font-medium">Hear the actual loudness of a single Decibel A-weighted level.</p>
+        <div class="p-3 bg-yellow-900 bg-opacity-30 border-l-4 border-yellow-400 rounded-lg text-sm md:text-base">
+            <p class="font-bold text-yellow-300">⚠️ IMPORTANT: Use Caution with Volume!</p>
+            <p class="text-yellow-200">Start with your device volume LOW. Increase it gradually. This simulates loudness and can be jarring if too high.</p>
+        </div>
+    </header>
+
+    <!-- Simulation Input -->
+    <div class="flex justify-center">
+        <div class="bg-gray-800 p-6 rounded-lg space-y-4 shadow-inner w-full max-w-md">
+            <h2 class="text-2xl font-bold text-emerald-300 text-center">Simulate Generator Sound</h2>
+            <div>
+                <label for="dba-a" class="block text-sm font-medium mb-1">Enter Target dBA Level (50 - 90)</label>
+                <input type="number" id="dba-a" value="67" min="50" max="90" class="w-full p-3 rounded-lg border-2 focus:ring-emerald-500 focus:border-emerald-500 text-lg text-center">
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls and Information -->
+    <div class="space-y-6">
+        <div class="flex flex-col sm:flex-row gap-4 justify-center">
+            <button id="play-button" onclick="playDifference()" class="w-full sm:w-1/2 py-4 bg-emerald-500 hover:bg-emerald-600 text-white text-xl font-bold rounded-xl transition duration-200 shadow-lg active:scale-[0.98] disabled:bg-gray-500">
+                Play Sound Simulation
+            </button>
+            <button id="stop-button" onclick="stopAll()" class="w-full sm:w-1/2 py-4 bg-red-600 hover:bg-red-700 text-white text-xl font-bold rounded-xl transition duration-200 shadow-lg active:scale-[0.98] disabled:bg-gray-500" disabled>
+                Stop Sound
+            </button>
+        </div>
+
+        <!-- Dynamic Message Box -->
+        <div id="message-box" class="p-4 bg-gray-600 rounded-lg font-medium text-center">
+            Enter your dBA value and click "Play Sound Simulation" to hear it.
+        </div>
+
+        <div class="p-6 bg-gray-800 rounded-xl">
+            <h3 class="text-xl font-bold mb-3 text-emerald-400">Understanding Decibels (dBA)</h3>
+            <ul class="list-disc list-inside space-y-2 text-gray-300 text-sm md:text-base">
+                <li>Every 10 dBA increase makes the noise seem twice as loud to your ear.</li>
+                <li>For context, quiet suburban areas are often around <strong>50 dBA</strong>. Normal conversation is about <strong>60 dBA</strong>. A vacuum cleaner or loud traffic is around <strong>70 dBA</strong>, and a lawnmower or power tool is typically <strong>80-90 dBA</strong>.</li>
+            </ul>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // Global variables for audio
+    let audioContext = null;
+    let playingSource = null; // To hold the currently playing OscillatorNode
+
+    const MESSAGE_BOX = document.getElementById('message-box');
+    const PLAY_BUTTON = document.getElementById('play-button');
+    const STOP_BUTTON = document.getElementById('stop-button');
+
+    // Reference point for volume calculation (90 dBA is set to a reasonable max gain)
+    const REFERENCE_DBA = 90;
+    const REFERENCE_GAIN = 0.5;
+
+    /**
+     * Converts a dBA level (e.g., 65) into a linear gain value
+     * relative to a defined reference point, using the logarithmic decibel formula.
+     * @param {number} dBA_level - The dBA value from the input.
+     * @returns {number} The calculated linear gain (0.0 to 1.0).
+     */
+    function dbaToGain(dBA_level) {
+        // Change in dB = 20 * log10(Gain_ratio)
+        // Gain_ratio = 10^(Change_in_dB / 20)
+        const dBA_difference = dBA_level - REFERENCE_DBA;
+        const gainRatio = Math.pow(10, dBA_difference / 20);
+        
+        // Apply the ratio to our safe reference gain
+        const gain = REFERENCE_GAIN * gainRatio;
+
+        // Ensure gain is within reasonable limits
+        return Math.min(Math.max(gain, 0.001), 1.0);
+    }
+
+    /**
+     * Plays a single tone at a specific dBA level for a duration, simulating engine noise.
+     * @param {number} dBA_level - The dBA level to simulate.
+     * @param {number} duration - The duration in seconds.
+     * @returns {Promise<void>} A promise that resolves when the tone stops.
+     */
+    function playTone(dBA_level, duration = 3.5) { 
+        return new Promise((resolve) => {
+            if (!audioContext) {
+                // Initialize context on first interaction
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+
+            if (playingSource) {
+                // Stop any previous tone instantly
+                playingSource.stop();
+            }
+
+            // Calculate the required gain
+            const gainValue = dbaToGain(dBA_level);
+
+            // 1. Create components
+            const oscillator = audioContext.createOscillator();
+            const filterNode = audioContext.createBiquadFilter(); 
+            const gainNode = audioContext.createGain();
+
+            // 2. Configure components
+            oscillator.type = 'sawtooth'; // Sawtooth for rich harmonics
+            oscillator.frequency.setValueAtTime(150, audioContext.currentTime); // Low fundamental frequency for rumble
+
+            // Configure Low-Pass Filter to mimic engine muffling/bass
+            filterNode.type = 'lowpass';
+            filterNode.frequency.setValueAtTime(600, audioContext.currentTime); 
+            filterNode.Q.setValueAtTime(1, audioContext.currentTime);
+
+            // Set the calculated gain
+            gainNode.gain.setValueAtTime(gainValue, audioContext.currentTime);
+
+            // 3. Connect the graph: Oscillator -> Filter -> Gain -> Destination (Speakers)
+            oscillator.connect(filterNode);
+            filterNode.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            // 4. Start and Stop
+            const startTime = audioContext.currentTime;
+            oscillator.start(startTime);
+            oscillator.stop(startTime + duration);
+
+            // Keep track of the current source for stopping
+            playingSource = oscillator;
+
+            // Resolve the promise when the sound ends
+            oscillator.onended = () => {
+                playingSource = null; // Clear the reference
+                resolve();
+            };
+        });
+    }
+
+    /**
+     * Main function to play the single simulated sound.
+     */
+    async function playDifference() {
+        // Prevent multiple simultaneous plays
+        if (playingSource) return;
+
+        PLAY_BUTTON.disabled = true;
+        STOP_BUTTON.disabled = false;
+
+        const dba = parseFloat(document.getElementById('dba-a').value); 
+
+        if (isNaN(dba)) {
+            MESSAGE_BOX.textContent = "Please enter a valid dBA level (50 - 90).";
+            PLAY_BUTTON.disabled = false;
+            STOP_BUTTON.disabled = true;
+            return;
+        }
+
+        const clamp = (num) => Math.min(Math.max(num, 50), 90);
+        const clampedDba = clamp(dba);
+
+        document.getElementById('dba-a').value = clampedDba;
+
+        MESSAGE_BOX.textContent = `Now playing the sound at ${clampedDba} dBA...`;
+
+        try {
+            // Play the single tone for 3.5 seconds
+            await playTone(clampedDba, 3.5);
+            if (!playingSource) return; // Stopped by user
+
+            MESSAGE_BOX.textContent = `Sound simulation for ${clampedDba} dBA complete. Enter a new value and click 'Play Sound Simulation' to try again.`;
+
+        } catch (error) {
+            console.error("Audio playback error:", error);
+            MESSAGE_BOX.textContent = "Error playing audio. Please ensure you've interacted with the page first.";
+        } finally {
+            PLAY_BUTTON.disabled = false;
+            STOP_BUTTON.disabled = true;
+        }
+    }
+
+    /**
+     * Stops any currently playing audio and resets the state.
+     */
+    function stopAll() {
+        if (playingSource) {
+            playingSource.onended = null; // Clear promise resolution
+            playingSource.stop(0);
+            playingSource = null;
+        }
+        if (audioContext && audioContext.state !== 'closed') {
+             // If a context exists, it's generally good practice to suspend it when not in use
+             // audioContext.suspend(); 
+        }
+        MESSAGE_BOX.textContent = "Sound stopped. Click 'Play Sound Simulation' to start again.";
+        PLAY_BUTTON.disabled = false;
+        STOP_BUTTON.disabled = true;
+    }
+</script>
+
+</body>
+</html>
